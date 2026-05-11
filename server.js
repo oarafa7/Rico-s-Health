@@ -1,7 +1,12 @@
-const express = require('express')
-const path = require('path')
-const cors = require('cors')
-const Anthropic = require('@anthropic-ai/sdk')
+import express from 'express'
+import { createRequire } from 'module'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
+import cors from 'cors'
+import Anthropic from '@anthropic-ai/sdk'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 const app = express()
 const PORT = process.env.PORT || 4173
@@ -10,7 +15,7 @@ app.use(cors())
 app.use(express.json())
 
 // Serve Vite build
-app.use(express.static(path.join(__dirname, 'dist')))
+app.use(express.static(join(__dirname, 'dist')))
 
 // Claude API proxy
 app.post('/api/chat', async (req, res) => {
@@ -25,7 +30,6 @@ app.post('/api/chat', async (req, res) => {
   }
 
   const client = new Anthropic({ apiKey })
-
   const systemPrompt = buildSystemPrompt(context)
 
   try {
@@ -63,7 +67,7 @@ function buildSystemPrompt(context) {
     }
 
     if (context.streak != null) {
-      lines.push(`## Adherence`)
+      lines.push("## Adherence")
       lines.push(`Current streak: ${context.streak} days`)
       lines.push("")
     }
@@ -87,7 +91,7 @@ function buildSystemPrompt(context) {
 
 // SPA fallback
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'))
+  res.sendFile(join(__dirname, 'dist', 'index.html'))
 })
 
 app.listen(PORT, '0.0.0.0', () => {
