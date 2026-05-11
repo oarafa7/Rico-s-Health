@@ -1,5 +1,4 @@
 import express from 'express'
-import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import cors from 'cors'
