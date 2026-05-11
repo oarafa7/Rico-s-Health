@@ -4,6 +4,6 @@
     "builder": "RAILPACK"
   },
   "deploy": {
-    "startCommand": "npx vite preview --host 0.0.0.0 --port ${PORT:-4173}"
+    "startCommand": "node server.js"
   }
 }
