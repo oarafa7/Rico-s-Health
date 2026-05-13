@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Check, TrendingUp, RotateCcw, ChevronLeft, ChevronRight, Beaker, X, Plus,
   AlertTriangle, Trash2, Package, Sparkles, Settings, Apple, LayoutDashboard,
@@ -458,7 +458,7 @@ function DashboardTab({ peptides, checked, nutritionData, stackStartDate, streak
 
 // ── PeptidesTab ────────────────────────────────────────────────────────────
 
-function PeptidesTab({ peptides, setPeptides, checked, setChecked, vialTracking, setVialTracking, currentDate, setCurrentDate }) {
+function PeptidesTab({ peptides, setPeptides, checked, setChecked, vialTracking, setVialTracking, currentDate, setCurrentDate, onSync }) {
   const [editing, setEditing] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
 
@@ -486,6 +486,7 @@ function PeptidesTab({ peptides, setPeptides, checked, setChecked, vialTracking,
     }
     newChecked[dateKey] = day;
     setChecked(newChecked);
+    onSync?.();
   };
 
   const savePeptide = (form) => {
@@ -630,7 +631,7 @@ function PeptidesTab({ peptides, setPeptides, checked, setChecked, vialTracking,
 
 // ── NutritionTab ───────────────────────────────────────────────────────────
 
-function NutritionTab({ nutritionData, setNutritionData, favourites, setFavourites }) {
+function NutritionTab({ nutritionData, setNutritionData, favourites, setFavourites, onSync }) {
   const [nutDate, setNutDate] = useState(new Date());
   const [showFoodModal, setShowFoodModal] = useState(false);
   const [editEntry, setEditEntry] = useState(null);
@@ -658,9 +659,10 @@ function NutritionTab({ nutritionData, setNutritionData, favourites, setFavourit
       : [...entries, entry];
     updateDay({ entries: newEntries });
     setShowFoodModal(false); setEditEntry(null);
+    onSync?.();
   };
 
-  const deleteEntry = (id) => updateDay({ entries: entries.filter(e=>e.id!==id) });
+  const deleteEntry = (id) => { updateDay({ entries: entries.filter(e=>e.id!==id) }); onSync?.(); };
 
   const toggleFavourite = (entry) => {
     const already = favourites.find(f=>f.id===entry.id);
@@ -855,8 +857,98 @@ function NutritionTab({ nutritionData, setNutritionData, favourites, setFavourit
 
 // ── SettingsTab ────────────────────────────────────────────────────────────
 
-function SettingsTab({ stackStartDate, setStackStartDate, onReset, favourites, setFavourites }) {
+// ── Hermes Sync utilities ──────────────────────────────────────────────────
+
+const HS = {
+  get enabled() { return localStorage.getItem('rico.hermesSync.enabled') === 'true'; },
+  get url()     { return localStorage.getItem('rico.hermesSync.url') || ''; },
+  get token()   { return localStorage.getItem('rico.hermesSync.token') || ''; },
+  get lastAt()  { return localStorage.getItem('rico.hermesSync.lastSyncAt') || ''; },
+  get status()  { return localStorage.getItem('rico.hermesSync.lastSyncStatus') || 'never'; },
+  set(key, val) { localStorage.setItem('rico.hermesSync.' + key, val); },
+};
+
+function buildSyncPayload(peptides, checked, nutritionData, stackStartDate) {
+  const today = getDateKey(new Date());
+  const dayOfWeek = new Date().getDay();
+  const dayChecked = checked[today] || {};
+  const entries = nutritionData[today]?.entries || [];
+  const target = nutritionData[today]?.target || 0;
+  const totals = dayTotals(entries);
+
+  const peptidePayload = {};
+  Object.values(peptides).forEach(p => {
+    if (!p.days?.includes(dayOfWeek)) return;
+    const takenAt = dayChecked[p.id];
+    const times = takenAt ? [new Date(takenAt).toTimeString().slice(0, 5)] : [];
+    peptidePayload[p.name] = { scheduled: 1, taken: takenAt ? 1 : 0, times };
+  });
+
+  const week = stackStartDate
+    ? Math.ceil((Date.now() - new Date(stackStartDate).getTime()) / (7 * 86400000))
+    : 0;
+
+  return {
+    date: today,
+    peptides: peptidePayload,
+    nutrition: {
+      calories: Math.round(totals.calories),
+      target,
+      protein_g: Math.round(totals.protein),
+      carbs_g: Math.round(totals.carbs),
+      fat_g: Math.round(totals.fat),
+    },
+    week_on_protocol: week,
+    client_version: '2.0',
+  };
+}
+
+async function doHermesSync(payload, url, token) {
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    return res.ok && data.ok === true ? 'success' : 'failed';
+  } catch {
+    return 'failed';
+  }
+}
+
+// ── SettingsTab ────────────────────────────────────────────────────────────
+
+function SettingsTab({ stackStartDate, setStackStartDate, onReset, favourites, setFavourites, peptides, checked, nutritionData }) {
   const [confirmReset, setConfirmReset] = useState(false);
+  const [syncEnabled, setSyncEnabled] = useState(() => HS.enabled);
+  const [syncUrl, setSyncUrl]         = useState(() => HS.url);
+  const [syncToken, setSyncToken]     = useState(() => HS.token);
+  const [lastSyncAt, setLastSyncAt]   = useState(() => HS.lastAt);
+  const [syncStatus, setSyncStatus]   = useState(() => HS.status);
+  const [testLoading, setTestLoading] = useState(false);
+  const [toast, setToast]             = useState(null);
+
+  const showToast = (type) => { setToast(type); setTimeout(() => setToast(null), 3000); };
+
+  const handleToggle = (val) => { setSyncEnabled(val); HS.set('enabled', val); };
+  const handleUrl    = (val) => { setSyncUrl(val);     HS.set('url', val); };
+  const handleToken  = (val) => { setSyncToken(val);   HS.set('token', val); };
+
+  const testSync = async () => {
+    if (!syncUrl || !syncToken) return;
+    setTestLoading(true);
+    const payload = buildSyncPayload(peptides, checked, nutritionData, stackStartDate);
+    const result = await doHermesSync(payload, syncUrl, syncToken);
+    HS.set('lastSyncAt', new Date().toISOString());
+    HS.set('lastSyncStatus', result);
+    setLastSyncAt(HS.lastAt);
+    setSyncStatus(result);
+    setTestLoading(false);
+    showToast(result);
+  };
+
+  const fmtDate = iso => iso ? new Date(iso).toLocaleString() : 'Never';
 
   return (
     <div className="px-4 pb-4 space-y-4">
@@ -900,6 +992,78 @@ function SettingsTab({ stackStartDate, setStackStartDate, onReset, favourites, s
         }
       </div>
 
+      {/* Hermes Sync */}
+      <div className="glass-card p-4 space-y-4">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Hermes Sync</p>
+
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-slate-700">Enable cloud sync</span>
+          <button
+            onClick={()=>handleToggle(!syncEnabled)}
+            className={`relative w-12 h-6 rounded-full transition-colors ${syncEnabled ? 'bg-[#007AFF]' : 'bg-slate-200'}`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${syncEnabled ? 'translate-x-6' : 'translate-x-0'}`}/>
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Sync URL</label>
+            <input
+              type="url"
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white/80 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
+              placeholder="https://your-endpoint.com/sync"
+              value={syncUrl}
+              onChange={e=>handleUrl(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Auth token</label>
+            <input
+              type="password"
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white/80 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
+              placeholder="••••••••"
+              value={syncToken}
+              onChange={e=>handleToken(e.target.value)}
+              autoComplete="new-password"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 text-xs text-slate-500">
+          <div>
+            <p className="font-medium text-slate-400">Last sync</p>
+            <p className="text-slate-700 mt-0.5">{fmtDate(lastSyncAt)}</p>
+          </div>
+          <div>
+            <p className="font-medium text-slate-400">Status</p>
+            <p className={`mt-0.5 font-semibold ${syncStatus==='success'?'text-emerald-600':syncStatus==='failed'?'text-red-500':'text-slate-400'}`}>
+              {syncStatus==='success'?'✓ Success':syncStatus==='failed'?'✗ Failed':'— Never'}
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={testSync}
+          disabled={!syncUrl || !syncToken || testLoading}
+          className="w-full py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-opacity"
+          style={{background:BRAND}}
+        >
+          {testLoading ? 'Syncing…' : 'Test Sync Now'}
+        </button>
+
+        <p className="text-xs text-slate-400 leading-relaxed border-t border-slate-100 pt-3">
+          When enabled, RICO sends a daily snapshot of your peptide adherence and nutrition totals to YOUR endpoint only. Data never leaves your device unless this toggle is ON. You can disable anytime.
+        </p>
+      </div>
+
+      {toast && (
+        <div className={`fixed top-20 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-2xl text-sm font-semibold text-white shadow-lg transition-all ${toast==='success'?'bg-emerald-500':'bg-red-500'}`}>
+          {toast==='success' ? '✓ Sync successful' : '✗ Sync failed'}
+        </div>
+      )}
+
       <p className="text-center text-xs text-slate-300 pb-2">RICO v2.0 · All data stored locally</p>
     </div>
   );
@@ -941,6 +1105,7 @@ export default function App() {
   const [nutritionData, setNutritionData] = useState({});
   const [favourites, setFavourites] = useState([]);
   const [showAssistant, setShowAssistant] = useState(false);
+  const lastSyncRef = useRef(0);
 
   // Load from localStorage
   useEffect(() => {
@@ -984,6 +1149,22 @@ export default function App() {
     return s;
   })();
 
+  const triggerSync = useCallback(async () => {
+    if (!HS.enabled) return;
+    const url = HS.url; const token = HS.token;
+    if (!url || !token) return;
+    const now = Date.now();
+    if (now - lastSyncRef.current < 5 * 60 * 1000) return;
+    lastSyncRef.current = now;
+    const payload = buildSyncPayload(peptides, checked, nutritionData, stackStartDate);
+    const status = await doHermesSync(payload, url, token);
+    HS.set('lastSyncAt', new Date().toISOString());
+    HS.set('lastSyncStatus', status);
+  }, [peptides, checked, nutritionData, stackStartDate]);
+
+  // Sync on app open
+  useEffect(() => { triggerSync(); }, []);
+
   const resetAll = () => {
     setPeptides({}); setChecked({}); setVialTracking({}); setStackStartDate(null); setNutritionData({}); setFavourites([]);
     localStorage.removeItem("rico-stack-v2");
@@ -1017,13 +1198,13 @@ export default function App() {
           )}
           {tab === "peptides" && (
             <PeptidesTab peptides={peptides} setPeptides={setPeptides} checked={checked} setChecked={setChecked}
-              vialTracking={vialTracking} setVialTracking={setVialTracking} currentDate={currentDate} setCurrentDate={setCurrentDate}/>
+              vialTracking={vialTracking} setVialTracking={setVialTracking} currentDate={currentDate} setCurrentDate={setCurrentDate} onSync={triggerSync}/>
           )}
           {tab === "nutrition" && (
-            <NutritionTab nutritionData={nutritionData} setNutritionData={setNutritionData} favourites={favourites} setFavourites={setFavourites}/>
+            <NutritionTab nutritionData={nutritionData} setNutritionData={setNutritionData} favourites={favourites} setFavourites={setFavourites} onSync={triggerSync}/>
           )}
           {tab === "settings" && (
-            <SettingsTab stackStartDate={stackStartDate} setStackStartDate={setStackStartDate} onReset={resetAll} favourites={favourites} setFavourites={setFavourites}/>
+            <SettingsTab stackStartDate={stackStartDate} setStackStartDate={setStackStartDate} onReset={resetAll} favourites={favourites} setFavourites={setFavourites} peptides={peptides} checked={checked} nutritionData={nutritionData}/>
           )}
         </div>
       </div>
