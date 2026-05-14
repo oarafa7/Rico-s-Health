@@ -938,6 +938,57 @@ async function doHermesSync(payload, url, token) {
   }
 }
 
+function buildHistoryPayload(peptides, checked, nutritionData, stackStartDate) {
+  const allDates = new Set([
+    ...Object.keys(checked),
+    ...Object.keys(nutritionData),
+  ]);
+
+  const records = Array.from(allDates).sort().map(dateKey => {
+    const date = new Date(dateKey);
+    const dayOfWeek = date.getDay();
+    const dayChecked = checked[dateKey] || {};
+    const entries = nutritionData[dateKey]?.entries || [];
+    const target = nutritionData[dateKey]?.target || 0;
+    const totals = dayTotals(entries);
+
+    const peptidePayload = {};
+    Object.values(peptides).forEach(p => {
+      if (!p.days?.includes(dayOfWeek)) return;
+      const takenAt = dayChecked[p.id];
+      peptidePayload[p.name] = {
+        scheduled: 1,
+        taken: takenAt ? 1 : 0,
+        times: takenAt ? [new Date(takenAt).toTimeString().slice(0, 5)] : [],
+      };
+    });
+
+    const week = stackStartDate
+      ? Math.ceil((date.getTime() - new Date(stackStartDate).getTime()) / (7 * 86400000))
+      : 0;
+
+    return {
+      date: dateKey,
+      peptides: peptidePayload,
+      nutrition: {
+        calories: Math.round(totals.calories),
+        target,
+        protein_g: Math.round(totals.protein),
+        carbs_g: Math.round(totals.carbs),
+        fat_g: Math.round(totals.fat),
+      },
+      week_on_protocol: Math.max(0, week),
+    };
+  });
+
+  return {
+    type: 'history_bulk',
+    exported_at: new Date().toISOString(),
+    client_version: '2.0',
+    records,
+  };
+}
+
 // ── SettingsTab ────────────────────────────────────────────────────────────
 
 function SettingsTab({ stackStartDate, setStackStartDate, onReset, favourites, setFavourites, peptides, checked, nutritionData }) {
@@ -947,8 +998,9 @@ function SettingsTab({ stackStartDate, setStackStartDate, onReset, favourites, s
   const [syncToken, setSyncToken]     = useState(() => HS.token);
   const [lastSyncAt, setLastSyncAt]   = useState(() => HS.lastAt);
   const [syncStatus, setSyncStatus]   = useState(() => HS.status);
-  const [testLoading, setTestLoading] = useState(false);
-  const [toast, setToast]             = useState(null);
+  const [testLoading, setTestLoading]       = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [toast, setToast]                   = useState(null);
 
   const showToast = (type) => { setToast(type); setTimeout(() => setToast(null), 3000); };
 
@@ -966,6 +1018,19 @@ function SettingsTab({ stackStartDate, setStackStartDate, onReset, favourites, s
     setLastSyncAt(HS.lastAt);
     setSyncStatus(result);
     setTestLoading(false);
+    showToast(result);
+  };
+
+  const pushHistory = async () => {
+    if (!syncUrl || !syncToken) return;
+    setHistoryLoading(true);
+    const payload = buildHistoryPayload(peptides, checked, nutritionData, stackStartDate);
+    const result = await doHermesSync(payload, syncUrl, syncToken);
+    HS.set('lastSyncAt', new Date().toISOString());
+    HS.set('lastSyncStatus', result);
+    setLastSyncAt(HS.lastAt);
+    setSyncStatus(result);
+    setHistoryLoading(false);
     showToast(result);
   };
 
@@ -1065,14 +1130,23 @@ function SettingsTab({ stackStartDate, setStackStartDate, onReset, favourites, s
           </div>
         </div>
 
-        <button
-          onClick={testSync}
-          disabled={!syncUrl || !syncToken || testLoading}
-          className="w-full py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-opacity"
-          style={{background:BRAND}}
-        >
-          {testLoading ? 'Syncing…' : 'Test Sync Now'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={testSync}
+            disabled={!syncUrl || !syncToken || testLoading || historyLoading}
+            className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-opacity"
+            style={{background:BRAND}}
+          >
+            {testLoading ? 'Syncing…' : 'Test Sync Now'}
+          </button>
+          <button
+            onClick={pushHistory}
+            disabled={!syncUrl || !syncToken || testLoading || historyLoading}
+            className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-[#007AFF] text-[#007AFF] disabled:opacity-40 transition-opacity bg-white/80"
+          >
+            {historyLoading ? 'Pushing…' : 'Push Full History'}
+          </button>
+        </div>
 
         <p className="text-xs text-slate-400 leading-relaxed border-t border-slate-100 pt-3">
           When enabled, RICO sends a daily snapshot of your peptide adherence and nutrition totals to YOUR endpoint only. Data never leaves your device unless this toggle is ON. You can disable anytime.
