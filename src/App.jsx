@@ -991,8 +991,10 @@ function buildHistoryPayload(peptides, checked, nutritionData, stackStartDate) {
 
 // ── SettingsTab ────────────────────────────────────────────────────────────
 
-function SettingsTab({ stackStartDate, setStackStartDate, onReset, favourites, setFavourites, peptides, checked, nutritionData }) {
+function SettingsTab({ stackStartDate, setStackStartDate, onReset, favourites, setFavourites, peptides, setPeptides, peptidePresets, setPeptidePresets, checked, nutritionData }) {
   const [confirmReset, setConfirmReset] = useState(false);
+  const [presetName, setPresetName]     = useState('');
+  const [confirmLoadId, setConfirmLoadId] = useState(null);
   const [syncEnabled, setSyncEnabled] = useState(() => HS.enabled);
   const [syncUrl, setSyncUrl]         = useState(() => HS.url);
   const [syncToken, setSyncToken]     = useState(() => HS.token);
@@ -1034,6 +1036,14 @@ function SettingsTab({ stackStartDate, setStackStartDate, onReset, favourites, s
     showToast(result);
   };
 
+  const savePreset = () => {
+    const name = presetName.trim() || `Stack ${new Date().toLocaleDateString()}`;
+    setPeptidePresets(prev => [...prev, { id: `preset_${Date.now()}`, name, savedAt: new Date().toISOString(), peptides }]);
+    setPresetName('');
+  };
+
+  const loadPreset = (preset) => { setPeptides(preset.peptides); setConfirmLoadId(null); };
+
   const fmtDate = iso => iso ? new Date(iso).toLocaleString() : 'Never';
 
   return (
@@ -1047,6 +1057,50 @@ function SettingsTab({ stackStartDate, setStackStartDate, onReset, favourites, s
             onChange={e=>setStackStartDate(e.target.value ? new Date(e.target.value).toISOString() : null)}
           />
         </div>
+      </div>
+
+      {/* Peptide Presets */}
+      <div className="glass-card p-4 space-y-3">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Peptide Presets</p>
+
+        <div className="flex gap-2">
+          <input
+            className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-white/80 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
+            placeholder="Preset name (e.g. TRT Stack)"
+            value={presetName}
+            onChange={e=>setPresetName(e.target.value)}
+          />
+          <button
+            onClick={savePreset}
+            disabled={Object.keys(peptides).length === 0}
+            className="px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
+            style={{background:BRAND}}
+          >
+            Save
+          </button>
+        </div>
+
+        {peptidePresets.length === 0
+          ? <p className="text-xs text-slate-400">No presets saved yet. Save your current stack above.</p>
+          : peptidePresets.map(preset => (
+            <div key={preset.id} className="border border-slate-100 rounded-xl p-3 space-y-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-800 truncate">{preset.name}</p>
+                  <p className="text-xs text-slate-400">{Object.values(preset.peptides).map(p=>p.name).join(', ')}</p>
+                </div>
+                <button onClick={()=>setPeptidePresets(p=>p.filter(x=>x.id!==preset.id))} className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 flex-shrink-0"><Trash2 size={14}/></button>
+              </div>
+              {confirmLoadId === preset.id
+                ? <div className="flex gap-2">
+                    <button onClick={()=>setConfirmLoadId(null)} className="flex-1 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-medium">Cancel</button>
+                    <button onClick={()=>loadPreset(preset)} className="flex-1 py-1.5 rounded-lg text-white text-xs font-semibold" style={{background:BRAND}}>Replace stack</button>
+                  </div>
+                : <button onClick={()=>setConfirmLoadId(preset.id)} className="w-full py-1.5 rounded-lg border border-[#007AFF] text-[#007AFF] text-xs font-semibold bg-white/80">Load Preset</button>
+              }
+            </div>
+          ))
+        }
       </div>
 
       {favourites.length > 0 && (
@@ -1199,6 +1253,7 @@ export default function App() {
   const [stackStartDate, setStackStartDate] = useState(null);
   const [nutritionData, setNutritionData] = useState({});
   const [favourites, setFavourites] = useState([]);
+  const [peptidePresets, setPeptidePresets] = useState([]);
   const [showAssistant, setShowAssistant] = useState(false);
   const lastSyncRef = useRef(0);
 
@@ -1213,7 +1268,8 @@ export default function App() {
         if (d.vialTracking)  setVialTracking(d.vialTracking);
         if (d.stackStartDate)setStackStartDate(d.stackStartDate);
         if (d.nutritionData) setNutritionData(d.nutritionData);
-        if (d.favourites)    setFavourites(d.favourites);
+        if (d.favourites)      setFavourites(d.favourites);
+        if (d.peptidePresets)  setPeptidePresets(d.peptidePresets);
       }
     } catch {}
   }, []);
@@ -1221,7 +1277,7 @@ export default function App() {
   // Auto-save
   useEffect(() => {
     try {
-      localStorage.setItem("rico-stack-v2", JSON.stringify({ peptides, checked, vialTracking, stackStartDate, nutritionData, favourites }));
+      localStorage.setItem("rico-stack-v2", JSON.stringify({ peptides, checked, vialTracking, stackStartDate, nutritionData, favourites, peptidePresets }));
     } catch {}
   }, [peptides, checked, vialTracking, stackStartDate, nutritionData, favourites]);
 
@@ -1299,7 +1355,11 @@ export default function App() {
             <NutritionTab nutritionData={nutritionData} setNutritionData={setNutritionData} favourites={favourites} setFavourites={setFavourites} onSync={triggerSync}/>
           )}
           {tab === "settings" && (
-            <SettingsTab stackStartDate={stackStartDate} setStackStartDate={setStackStartDate} onReset={resetAll} favourites={favourites} setFavourites={setFavourites} peptides={peptides} checked={checked} nutritionData={nutritionData}/>
+            <SettingsTab stackStartDate={stackStartDate} setStackStartDate={setStackStartDate} onReset={resetAll}
+              favourites={favourites} setFavourites={setFavourites}
+              peptides={peptides} setPeptides={setPeptides}
+              peptidePresets={peptidePresets} setPeptidePresets={setPeptidePresets}
+              checked={checked} nutritionData={nutritionData}/>
           )}
         </div>
       </div>
