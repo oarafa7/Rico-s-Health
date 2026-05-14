@@ -23,6 +23,35 @@ const CATEGORIES = ["Peptide", "Daily", "Support", "GLP-1", "Custom"];
 
 const BRAND = "#007AFF";
 
+// Preloaded protocol presets matching the user's compounds + dosages
+const DEFAULT_PEPTIDE_PRESETS = [
+  {
+    id: 'preset_default_full',
+    name: 'Full Protocol',
+    savedAt: '2026-05-14T00:00:00.000Z',
+    peptides: {
+      // dose=1mg, vialMg=2, bacMl=0.5 → conc 4mg/ml → 25.0 units
+      p_retatrutide:  { id:'p_retatrutide',  name:'Retatrutide',   category:'GLP-1',   vialMg:2,    bacMl:0.5, unit:'mg', doseAmount:1,    days:[3]         },
+      // dose=71mg, vialMg=2500, bacMl=10 → conc 250mg/ml → 28.4 units
+      p_testo_e:      { id:'p_testo_e',      name:'Testosterone E', category:'Hormone', vialMg:2500, bacMl:10,  unit:'mg', doseAmount:71,   days:[1,4]       },
+      // dose=2mg, vialMg=50, bacMl=2 → conc 25mg/ml → 8.0 units
+      p_ghkcu:        { id:'p_ghkcu',        name:'GHKc-U',        category:'Peptide', vialMg:50,   bacMl:2,   unit:'mg', doseAmount:2,    days:[1,2,3,4,5] },
+      // dose=0.25mg, vialMg=5, bacMl=2 → conc 2.5mg/ml → 10.0 units
+      p_bpc157:       { id:'p_bpc157',       name:'BPC157',        category:'Peptide', vialMg:5,    bacMl:2,   unit:'mg', doseAmount:0.25, days:[1,2,3,4,5] },
+      // dose=2mg, vialMg=10, bacMl=2 → conc 5mg/ml → 40.0 units
+      p_tb500:        { id:'p_tb500',        name:'TB500',         category:'Peptide', vialMg:10,   bacMl:2,   unit:'mg', doseAmount:2,    days:[1,3]       },
+      // dose=0.05mg, vialMg=1, bacMl=5 → conc 0.2mg/ml → 25.0 units
+      p_igfl13:       { id:'p_igfl13',       name:'IGFL1-3',       category:'Peptide', vialMg:1,    bacMl:5,   unit:'mg', doseAmount:0.05, days:[1,2,3,4,5] },
+      // dose=0.25mg, vialMg=5, bacMl=2.5 → conc 2mg/ml → 12.5 units
+      p_cjc1295:      { id:'p_cjc1295',      name:'CJC-1295',      category:'GHRH',    vialMg:5,    bacMl:2.5, unit:'mg', doseAmount:0.25, days:[1,2,3,4,5] },
+      // dose=0.25mg, vialMg=5, bacMl=2.5 → conc 2mg/ml → 12.5 units
+      p_ipamorelin:   { id:'p_ipamorelin',   name:'Ipamorelin',    category:'GHRP',    vialMg:5,    bacMl:2.5, unit:'mg', doseAmount:0.25, days:[1,2,3,4,5] },
+      // dose=500, vialMg=5000, bacMl=1 → conc 5000/ml → 10.0 units
+      p_hcg:          { id:'p_hcg',          name:'HCG',           category:'Hormone', vialMg:5000, bacMl:1,   unit:'IU', doseAmount:500,  days:[1,3,5]     },
+    },
+  },
+];
+
 // ── Utils ──────────────────────────────────────────────────────────────────
 
 const getDateKey = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
@@ -1263,13 +1292,15 @@ export default function App() {
       const raw = localStorage.getItem("rico-stack-v2") || localStorage.getItem("rico-stack-v1");
       if (raw) {
         const d = JSON.parse(raw);
-        if (d.peptides)      setPeptides(d.peptides);
-        if (d.checked)       setChecked(d.checked);
-        if (d.vialTracking)  setVialTracking(d.vialTracking);
-        if (d.stackStartDate)setStackStartDate(d.stackStartDate);
-        if (d.nutritionData) setNutritionData(d.nutritionData);
+        if (d.peptides)        setPeptides(d.peptides);
+        if (d.checked)         setChecked(d.checked);
+        if (d.vialTracking)    setVialTracking(d.vialTracking);
+        if (d.stackStartDate)  setStackStartDate(d.stackStartDate);
+        if (d.nutritionData)   setNutritionData(d.nutritionData);
         if (d.favourites)      setFavourites(d.favourites);
-        if (d.peptidePresets)  setPeptidePresets(d.peptidePresets);
+        setPeptidePresets(d.peptidePresets?.length ? d.peptidePresets : DEFAULT_PEPTIDE_PRESETS);
+      } else {
+        setPeptidePresets(DEFAULT_PEPTIDE_PRESETS);
       }
     } catch {}
   }, []);
