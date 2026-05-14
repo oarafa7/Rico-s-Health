@@ -37,7 +37,9 @@ const relativeDay = d => {
 };
 const calcUnits = (doseAmount, p) => p.bacMl > 0 && p.vialMg > 0 ? ((doseAmount / (p.vialMg / p.bacMl)) * 100).toFixed(1) : "—";
 const dosesPerVial = p => p.doseAmount > 0 ? Math.floor(p.vialMg / p.doseAmount) : 0;
-const entryCalories = e => Math.round((e.protein||0)*4 + (e.carbs||0)*4 + (e.fat||0)*9);
+const entryCalories = e => e.calories > 0
+  ? Math.round(e.calories)
+  : Math.round((e.protein||0)*4 + (e.carbs||0)*4 + (e.fat||0)*9);
 const dayTotals = entries => entries.reduce((a, e) => ({ protein: a.protein+(e.protein||0), carbs: a.carbs+(e.carbs||0), fat: a.fat+(e.fat||0), calories: a.calories+entryCalories(e) }), { protein:0, carbs:0, fat:0, calories:0 });
 
 const emptyMicros = () => ({ vitaminC: null, vitaminD: null, magnesium: null, zinc: null, iron: null, calcium: null, potassium: null, sodium: null });
@@ -130,16 +132,24 @@ function PeptideEditor({ peptide, onSave, onClose, onDelete, vialInfo }) {
 
 function FoodModal({ initial, onSave, onClose, favourites, onFavourite }) {
   const isEdit = !!initial?.id;
-  const [form, setForm] = useState({ note:"", micros: emptyMicros(), ...initial, protein: initial?.protein??"", carbs: initial?.carbs??"", fat: initial?.fat??"" });
+  const [form, setForm] = useState({ note:"", micros: emptyMicros(), ...initial, protein: initial?.protein??"", carbs: initial?.carbs??"", fat: initial?.fat??"", calories: initial?.calories > 0 ? String(initial.calories) : "", caloriesManual: initial?.calories > 0 });
   const [showMicros, setShowMicros] = useState(false);
   const [showFavs, setShowFavs] = useState(favourites.length > 0);
 
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const setMicro = (k,v) => setForm(f=>({...f, micros:{...f.micros,[k]:v===""?null:parseFloat(v)||0}}));
 
-  const loadFav = fav => setForm(f=>({...f, protein:fav.protein, carbs:fav.carbs, fat:fav.fat, note:fav.note||f.note, micros:fav.micros||emptyMicros()}));
+  const loadFav = fav => {
+    const auto = Math.round((fav.protein||0)*4 + (fav.carbs||0)*4 + (fav.fat||0)*9);
+    const cal = fav.calories > 0 ? String(fav.calories) : (auto > 0 ? String(auto) : "");
+    setForm(f=>({...f, protein:fav.protein, carbs:fav.carbs, fat:fav.fat, note:fav.name||fav.note||f.note, micros:fav.micros||emptyMicros(), calories:cal, caloriesManual:fav.calories>0}));
+  };
 
-  const cals = Math.round((parseFloat(form.protein)||0)*4 + (parseFloat(form.carbs)||0)*4 + (parseFloat(form.fat)||0)*9);
+  useEffect(() => {
+    if (form.caloriesManual) return;
+    const auto = Math.round((parseFloat(form.protein)||0)*4 + (parseFloat(form.carbs)||0)*4 + (parseFloat(form.fat)||0)*9);
+    setForm(prev => ({...prev, calories: auto > 0 ? String(auto) : ""}));
+  }, [form.protein, form.carbs, form.fat]);
 
   const handleSave = () => {
     const entry = {
@@ -147,6 +157,7 @@ function FoodModal({ initial, onSave, onClose, favourites, onFavourite }) {
       protein: parseFloat(form.protein)||0,
       carbs: parseFloat(form.carbs)||0,
       fat: parseFloat(form.fat)||0,
+      calories: parseFloat(form.calories)||0,
       note: form.note,
       micros: form.micros,
       time: initial?.time || new Date().toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}),
@@ -181,6 +192,18 @@ function FoodModal({ initial, onSave, onClose, favourites, onFavourite }) {
 
         <input className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white/80 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#007AFF]" placeholder="Label (optional)" value={form.note} onChange={e=>set("note",e.target.value)} />
 
+        <div>
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">Calories (kcal)</label>
+          <input
+            type="number" inputMode="decimal" min="0"
+            className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white/80 text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
+            placeholder="auto-calculated from macros"
+            value={form.calories}
+            onChange={e => setForm(f => ({...f, calories: e.target.value, caloriesManual: e.target.value !== ""}))}
+          />
+          {!form.caloriesManual && <p className="text-xs text-slate-400 mt-1">Enter macros below to auto-fill, or type calories directly</p>}
+        </div>
+
         <div className="grid grid-cols-3 gap-2">
           {[["protein","Protein (g)","#007AFF"],["carbs","Carbs (g)","#F59E0B"],["fat","Fat (g)","#8B5CF6"]].map(([k,label,color])=>(
             <div key={k}>
@@ -189,8 +212,6 @@ function FoodModal({ initial, onSave, onClose, favourites, onFavourite }) {
             </div>
           ))}
         </div>
-
-        {cals > 0 && <p className="text-center text-sm font-semibold text-slate-600">{cals} kcal</p>}
 
         <button className="flex items-center gap-2 text-xs font-semibold text-slate-500" onClick={()=>setShowMicros(s=>!s)}>
           {showMicros ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} Micronutrients (optional)
